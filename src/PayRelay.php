@@ -1,0 +1,103 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AdeRidwan\PayRelayPhp;
+
+use AdeRidwan\PayRelayPhp\Enums\PaymentStatus;
+use AdeRidwan\PayRelayPhp\Events\PaymentCreated;
+use AdeRidwan\PayRelayPhp\Events\PaymentExpired;
+use AdeRidwan\PayRelayPhp\Models\PayRelayPayment;
+use AdeRidwan\PayRelayPhp\Qris\QrisRelay;
+use AdeRidwan\PayRelayPhp\Support\UniqueCodeGenerator;
+use Illuminate\Support\Str;
+
+class PayRelay
+{
+    public static function model(): string
+    {
+        return config('pay-relay.model', PayRelayPayment::class);
+    }
+
+    /**
+     * Create a new payment with QRIS dynamic.
+     */
+    public function create(int $amount, ?string $referenceId = null, ?int $expiryMinutes = null): PayRelayPayment
+    {
+        $staticQris = config('pay-relay.qris_static');
+        if (empty($staticQris)) {
+            throw new \RuntimeException('pay-relay.qris_static is empty. Set PAY_RELAY_QRIS_STATIC in .env');
+        }
+
+        $referenceId ??= (string) Str::ulid();
+        $expiryMinutes ??= (int) config('pay-relay.expiry_minutes', 15);
+
+        $model = static::model();
+
+        $generated = UniqueCodeGenerator::generate($amount, function (int $finalAmount) use ($model): bool {
+            return $model::where('amount_final', $finalAmount)
+                ->where('status', PaymentStatus::Pending->value)
+                ->where('expires_at', '>', now())
+                ->exists();
+        });
+
+        $qrisDynamic = QrisRelay::toDynamic($staticQris, $generated['final_amount']);
+
+        $payment = $model::create([
+            'reference_id' => $referenceId,
+            'amount_original' => $amount,
+            'unique_code' => $generated['unique_code'],
+            'amount_final' => $generated['final_amount'],
+            'qris_static' => $staticQris,
+            'qris_dynamic' => $qrisDynamic,
+            'status' => PaymentStatus::Pending,
+            'expires_at' => now()->addMinutes($expiryMinutes),
+        ]);
+
+        event(new PaymentCreated($payment));
+
+        return $payment;
+    }
+
+    public function find(string $referenceId): ?PayRelayPayment
+    {
+        return static::model()::where('reference_id', $referenceId)->first();
+    }
+
+    public function findOrFail(string $referenceId): PayRelayPayment
+    {
+        return static::model()::where('reference_id', $referenceId)->firstOrFail();
+    }
+
+    public function check(string $referenceId): PaymentStatus
+    {
+        return $this->findOrFail($referenceId)->status;
+    }
+
+    public function checkByAmount(int $finalAmount): ?PayRelayPayment
+    {
+        return static::model()::where('amount_final', $finalAmount)
+            ->where('status', PaymentStatus::Pending->value)
+            ->where('expires_at', '>', now())
+            ->first();
+    }
+
+    /**
+     * Expire overdue pending payments.
+     * @return int number of expired rows
+     */
+    public function expireOverdue(): int
+    {
+        $model = static::model();
+        $overdue = $model::overdue()->get();
+        $count = 0;
+
+        foreach ($overdue as $payment) {
+            $payment->update(['status' => PaymentStatus::Expired]);
+            event(new PaymentExpired($payment));
+            $count++;
+        }
+
+        return $count;
+    }
+}

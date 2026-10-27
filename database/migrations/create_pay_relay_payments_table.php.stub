@@ -1,0 +1,33 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create(config('pay-relay.table', 'pay_relay_payments'), function (Blueprint $table) {
+            $table->id();
+            $table->string('reference_id', 64)->unique();
+            $table->unsignedBigInteger('amount_original');
+            $table->string('unique_code', 10);
+            $table->unsignedBigInteger('amount_final')->index();
+            $table->text('qris_static');
+            $table->text('qris_dynamic');
+            $table->string('status', 20)->default('pending')->index();
+            $table->timestamp('expires_at')->index();
+            $table->timestamp('paid_at')->nullable();
+            $table->json('raw_notification')->nullable();
+            $table->timestamps();
+
+            $table->index(['amount_final', 'status']);
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists(config('pay-relay.table', 'pay_relay_payments'));
+    }
+};
