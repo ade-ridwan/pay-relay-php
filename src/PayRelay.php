@@ -22,26 +22,28 @@ class PayRelay
 
     /**
      * Create a new payment with QRIS dynamic.
+     * Pass $qrisStatic explicitly (e.g. Settings::get('qris_code')) or fallback to config.
      */
-    public function create(int $amount, ?string $referenceId = null, ?int $expiryMinutes = null): PayRelayPayment
+    public function create(int $amount, ?string $referenceId = null, ?int $expiryMinutes = null, ?string $qrisStatic = null): PayRelayPayment
     {
-        return $this->createInternal($amount, $referenceId, $expiryMinutes, null);
+        return $this->createInternal($amount, $referenceId, $expiryMinutes, null, $qrisStatic);
     }
 
     /**
      * Create payment linked to a payable model (Transaction, Donation, etc).
-     * Example: PayRelay::createFor($donation, 50000)
+     * Example: PayRelay::createFor($donation, 50000, qrisStatic: Settings::get('qris_code'))
      */
-    public function createFor(Model $payable, int $amount, ?string $referenceId = null, ?int $expiryMinutes = null): PayRelayPayment
+    public function createFor(Model $payable, int $amount, ?string $referenceId = null, ?int $expiryMinutes = null, ?string $qrisStatic = null): PayRelayPayment
     {
-        return $this->createInternal($amount, $referenceId, $expiryMinutes, $payable);
+        return $this->createInternal($amount, $referenceId, $expiryMinutes, $payable, $qrisStatic);
     }
 
-    protected function createInternal(int $amount, ?string $referenceId, ?int $expiryMinutes, ?Model $payable): PayRelayPayment
+    protected function createInternal(int $amount, ?string $referenceId, ?int $expiryMinutes, ?Model $payable, ?string $qrisStatic): PayRelayPayment
     {
-        $staticQris = config('pay-relay.qris_static');
-        if (empty($staticQris)) {
-            throw new \RuntimeException('pay-relay.qris_static is empty. Set PAY_RELAY_QRIS_STATIC in .env');
+        $qrisStatic ??= config('pay-relay.qris_static');
+
+        if (empty($qrisStatic)) {
+            throw new \RuntimeException('QRIS statis kosong. Set PAY_RELAY_QRIS_STATIC atau pass $qrisStatic: Settings::get(\'qris_code\').');
         }
 
         $referenceId ??= (string) Str::ulid();
@@ -56,14 +58,14 @@ class PayRelay
                 ->exists();
         });
 
-        $qrisDynamic = QrisRelay::toDynamic($staticQris, $generated['final_amount']);
+        $qrisDynamic = QrisRelay::toDynamic($qrisStatic, $generated['final_amount']);
 
         $attributes = [
             'reference_id' => $referenceId,
             'amount_original' => $amount,
             'unique_code' => $generated['unique_code'],
             'amount_final' => $generated['final_amount'],
-            'qris_static' => $staticQris,
+            'qris_static' => $qrisStatic,
             'qris_dynamic' => $qrisDynamic,
             'status' => PaymentStatus::Pending,
             'expires_at' => now()->addMinutes($expiryMinutes),
