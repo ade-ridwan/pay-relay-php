@@ -4,10 +4,11 @@ declare(strict_types=1);
 
 namespace AdeRidwan\PayRelayPhp\Http\Controllers;
 
+use AdeRidwan\PayRelayPhp\Contracts\WebhookParserInterface;
 use AdeRidwan\PayRelayPhp\Enums\PaymentStatus;
 use AdeRidwan\PayRelayPhp\Events\PaymentPaid;
 use AdeRidwan\PayRelayPhp\Models\PayRelayPayment;
-use AdeRidwan\PayRelayPhp\Support\UniqueCodeGenerator;
+use AdeRidwan\PayRelayPhp\Support\DefaultWebhookParser;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\Log;
@@ -16,15 +17,27 @@ class WebhookController extends Controller
 {
     public function handle(Request $request)
     {
-        $amount = UniqueCodeGenerator::normalizeAmount($request->input('amount'));
+        $parserClass = config('pay-relay.webhook.parser', DefaultWebhookParser::class);
 
-        // Fallback: try amount_text if amount not present
-        if ($amount === null) {
-            $amount = UniqueCodeGenerator::normalizeAmount($request->input('amount_text'));
+        if (!is_string($parserClass) || !class_exists($parserClass)) {
+            Log::error('pay-relay: webhook parser class not found', ['parser' => $parserClass]);
+
+            return response()->json(['message' => 'Webhook parser misconfigured.'], 500);
         }
 
+        $parser = app($parserClass);
+
+        if (!$parser instanceof WebhookParserInterface) {
+            Log::error('pay-relay: webhook parser must implement WebhookParserInterface', ['parser' => $parserClass]);
+
+            return response()->json(['message' => 'Webhook parser misconfigured.'], 500);
+        }
+
+        $amount = $parser->parseAmount($request);
+        $payload = $parser->parsePayload($request);
+
         if ($amount === null || $amount <= 0) {
-            Log::warning('pay-relay: webhook invalid amount', ['payload' => $request->all()]);
+            Log::warning('pay-relay: webhook invalid amount', ['payload' => $payload]);
 
             return response()->json(['matched' => false, 'message' => 'Invalid amount.'], 422);
         }
@@ -54,7 +67,7 @@ class WebhookController extends Controller
         if (!$payment) {
             Log::warning('pay-relay: webhook unmatched', [
                 'amount' => $amount,
-                'payload' => $request->all(),
+                'payload' => $payload,
             ]);
 
             return response()->json(['matched' => false, 'message' => 'No pending payment found for amount.'], 404);
@@ -63,7 +76,7 @@ class WebhookController extends Controller
         $payment->update([
             'status' => PaymentStatus::Paid,
             'paid_at' => now(),
-            'raw_notification' => $request->all(),
+            'raw_notification' => $payload,
         ]);
 
         event(new PaymentPaid($payment));

@@ -69,6 +69,9 @@ return [
         'webhook_path' => 'webhook',
         'status_path'  => 'payments/{referenceId}/status',
     ],
+    'webhook' => [
+        'parser' => \AdeRidwan\PayRelayPhp\Support\DefaultWebhookParser::class,
+    ],
     'model' => \AdeRidwan\PayRelayPhp\Models\PayRelayPayment::class,
     'table' => 'pay_relay_payments',
 ];
@@ -175,10 +178,33 @@ Payload:
 ```
 
 **Aturan controller:**
-- `amount` dinormalisasi (`Rp100.123` → `100123`).
+- `amount` dinormalisasi (`Rp100.123` → `100123`) via parser (`Contracts/WebhookParserInterface`).
 - Cari `pay_relay_payments` dengan `amount_final = amount` + `status=pending` + `expires_at > now()` → update `paid`.
 - Jika sudah `paid` → response `200 {already_paid:true}` (idempotent).
 - Jika tidak ketemu → `404` (Android bisa retry).
+
+**Custom parsing di project pengguna:**
+```php
+// app/Parsers/MyQrisParser.php
+use AdeRidwan\PayRelayPhp\Contracts\WebhookParserInterface;
+use AdeRidwan\PayRelayPhp\Support\UniqueCodeGenerator;
+use Illuminate\Http\Request;
+
+class MyQrisParser implements WebhookParserInterface {
+    public function parseAmount(Request $request): ?int {
+        // contoh field beda: data.nominal / sms.body
+        return UniqueCodeGenerator::normalizeAmount(
+            $request->input('data.nominal') ?? $request->input('sms.body') ?? $request->input('amount')
+        );
+    }
+    public function parsePayload(Request $request): array {
+        return $request->all(); // simpan ke raw_notification
+    }
+}
+
+// config/pay-relay.php (publish dulu)
+'webhook' => ['parser' => \App\Parsers\MyQrisParser::class],
+```
 
 ---
 

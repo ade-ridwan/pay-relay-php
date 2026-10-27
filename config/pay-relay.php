@@ -55,6 +55,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Webhook Parser
+    |--------------------------------------------------------------------------
+    | Class untuk parsing amount & payload dari webhook Android.
+    | Buat class sendiri di project (implement WebhookParserInterface)
+    | jika field JSON tidak sesuai default (amount / amount_text).
+    */
+    'webhook' => [
+        'parser' => \AdeRidwan\PayRelayPhp\Support\DefaultWebhookParser::class,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Model
     |--------------------------------------------------------------------------
     | Class Eloquent untuk payment. Ganti jika ingin extend sendiri.
