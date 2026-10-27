@@ -1,6 +1,6 @@
 # pay-relay-php
 
-Relay **QRIS Statis** menjadi **QRIS Dinamis** dengan kode unik di nominal — tanpa payment gateway mahal. Verifikasi pembayaran via **webhook custom** dari aplikasi **Android Notification Listener** yang menangkap notifikasi mutasi masuk (BCA, BRI, Mandiri, DANA, GoPay Merchant, dll).
+Relay **QRIS Statis** menjadi **QRIS Dinamis** dengan kode unik di nominal. Verifikasi pembayaran via **webhook custom** dari aplikasi **Android Notification Listener** yang menangkap notifikasi mutasi masuk (BCA, BRI, Mandiri, DANA, GoPay Merchant, dll).
 
 > Cocok untuk UMKM / warung yang cuma punya 1 QRIS cetak tapi ingin checkout otomatis di web.
 
