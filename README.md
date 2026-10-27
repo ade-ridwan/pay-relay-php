@@ -5,7 +5,7 @@ Relay **QRIS Statis** menjadi **QRIS Dinamis** dengan kode unik di nominal — t
 > Cocok untuk UMKM / warung yang cuma punya 1 QRIS cetak tapi ingin checkout otomatis di web.
 
 [![PHP ^8.1](https://img.shields.io/badge/PHP-^8.1-blue)]()
-[![Laravel 10|11](https://img.shields.io/badge/Laravel-10%20%7C%2011-red)]()
+[![Laravel 10+](https://img.shields.io/badge/Laravel-10%2B-red)]()
 [![License MIT](https://img.shields.io/badge/license-MIT-green)]()
 
 ---
