@@ -63,6 +63,7 @@ return [
     */
     'webhook' => [
         'parser' => \AdeRidwan\PayRelayPhp\Support\DefaultWebhookParser::class,
+        'verify_signature' => env('PAY_RELAY_VERIFY_SIGNATURE', true),
     ],
 
     /*

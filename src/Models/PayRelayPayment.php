@@ -6,10 +6,13 @@ namespace AdeRidwan\PayRelayPhp\Models;
 
 use AdeRidwan\PayRelayPhp\Enums\PaymentStatus;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 
 /**
  * @property int $id
  * @property string $reference_id
+ * @property string|null $payable_type
+ * @property int|string|null $payable_id
  * @property int $amount_original
  * @property string $unique_code
  * @property int $amount_final
@@ -19,11 +22,14 @@ use Illuminate\Database\Eloquent\Model;
  * @property \Carbon\Carbon $expires_at
  * @property \Carbon\Carbon|null $paid_at
  * @property array|null $raw_notification
+ * @property \Illuminate\Database\Eloquent\Model|null $payable
  */
 class PayRelayPayment extends Model
 {
     protected $fillable = [
         'reference_id',
+        'payable_type',
+        'payable_id',
         'amount_original',
         'unique_code',
         'amount_final',
@@ -45,6 +51,11 @@ class PayRelayPayment extends Model
     public function getTable(): string
     {
         return config('pay-relay.table', 'pay_relay_payments');
+    }
+
+    public function payable(): MorphTo
+    {
+        return $this->morphTo();
     }
 
     public function isPending(): bool

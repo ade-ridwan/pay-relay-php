@@ -165,6 +165,12 @@ Content-Type: application/json
 X-Pay-Relay-Signature: hmac_sha256(raw_body, PAY_RELAY_WEBHOOK_SECRET)
 ```
 
+**Test tanpa signature (bypass):** set di `.env` untuk local/testing:
+```env
+PAY_RELAY_VERIFY_SIGNATURE=false
+```
+Lalu POST tanpa header signature akan lolos. Untuk production biarkan `true` (default).
+
 Payload:
 
 ```json

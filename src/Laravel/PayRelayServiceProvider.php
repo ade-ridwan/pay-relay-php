@@ -32,6 +32,10 @@ class PayRelayServiceProvider extends ServiceProvider
             __DIR__ . '/../../database/migrations/create_pay_relay_payments_table.php.stub' => database_path('migrations/' . date('Y_m_d_His') . '_create_pay_relay_payments_table.php'),
         ], 'pay-relay-migrations');
 
+        $this->publishes([
+            __DIR__ . '/../../database/migrations/add_payable_to_pay_relay_payments_table.php.stub' => database_path('migrations/' . date('Y_m_d_His', time() + 1) . '_add_payable_to_pay_relay_payments_table.php'),
+        ], 'pay-relay-payable');
+
         if ($this->app->runningInConsole()) {
             $this->commands([ExpirePaymentsCommand::class]);
         }

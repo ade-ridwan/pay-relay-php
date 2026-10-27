@@ -12,6 +12,10 @@ class VerifyWebhookSignature
 {
     public function handle(Request $request, Closure $next): Response
     {
+        if (!config('pay-relay.webhook.verify_signature', true)) {
+            return $next($request);
+        }
+
         $secret = config('pay-relay.webhook_secret');
 
         if (empty($secret)) {

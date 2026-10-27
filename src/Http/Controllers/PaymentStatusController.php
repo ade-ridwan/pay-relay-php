@@ -20,6 +20,8 @@ class PaymentStatusController extends Controller
 
         return response()->json([
             'reference_id' => $payment->reference_id,
+            'payable_type' => $payment->payable_type,
+            'payable_id' => $payment->payable_id,
             'status' => $payment->status->value,
             'amount_original' => $payment->amount_original,
             'amount_final' => $payment->amount_final,

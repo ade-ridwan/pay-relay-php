@@ -10,6 +10,7 @@ use AdeRidwan\PayRelayPhp\Events\PaymentExpired;
 use AdeRidwan\PayRelayPhp\Models\PayRelayPayment;
 use AdeRidwan\PayRelayPhp\Qris\QrisRelay;
 use AdeRidwan\PayRelayPhp\Support\UniqueCodeGenerator;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 
 class PayRelay
@@ -23,6 +24,20 @@ class PayRelay
      * Create a new payment with QRIS dynamic.
      */
     public function create(int $amount, ?string $referenceId = null, ?int $expiryMinutes = null): PayRelayPayment
+    {
+        return $this->createInternal($amount, $referenceId, $expiryMinutes, null);
+    }
+
+    /**
+     * Create payment linked to a payable model (Transaction, Donation, etc).
+     * Example: PayRelay::createFor($donation, 50000)
+     */
+    public function createFor(Model $payable, int $amount, ?string $referenceId = null, ?int $expiryMinutes = null): PayRelayPayment
+    {
+        return $this->createInternal($amount, $referenceId, $expiryMinutes, $payable);
+    }
+
+    protected function createInternal(int $amount, ?string $referenceId, ?int $expiryMinutes, ?Model $payable): PayRelayPayment
     {
         $staticQris = config('pay-relay.qris_static');
         if (empty($staticQris)) {
@@ -43,7 +58,7 @@ class PayRelay
 
         $qrisDynamic = QrisRelay::toDynamic($staticQris, $generated['final_amount']);
 
-        $payment = $model::create([
+        $attributes = [
             'reference_id' => $referenceId,
             'amount_original' => $amount,
             'unique_code' => $generated['unique_code'],
@@ -52,7 +67,14 @@ class PayRelay
             'qris_dynamic' => $qrisDynamic,
             'status' => PaymentStatus::Pending,
             'expires_at' => now()->addMinutes($expiryMinutes),
-        ]);
+        ];
+
+        if ($payable) {
+            $attributes['payable_type'] = $payable->getMorphClass();
+            $attributes['payable_id'] = $payable->getKey();
+        }
+
+        $payment = $model::create($attributes);
 
         event(new PaymentCreated($payment));
 
