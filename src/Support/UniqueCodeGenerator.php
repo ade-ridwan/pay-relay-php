@@ -17,10 +17,10 @@ final class UniqueCodeGenerator
      */
     public static function generate(int $amount, ?callable $existsCheck = null): array
     {
-        $length = (int) config('pay-relay.unique_code.length', 3);
-        $min = (int) config('pay-relay.unique_code.min', (int) str_repeat('1', $length) === 0 ? 100 : (int) pow(10, $length - 1));
-        $max = (int) config('pay-relay.unique_code.max', (int) pow(10, $length) - 1);
-        $maxRetry = (int) config('pay-relay.unique_code.max_retry', 10);
+        $length = (int) self::cfg('pay-relay.unique_code.length', 3);
+        $min = (int) self::cfg('pay-relay.unique_code.min', (int) str_repeat('1', $length) === 0 ? 100 : (int) pow(10, $length - 1));
+        $max = (int) self::cfg('pay-relay.unique_code.max', (int) pow(10, $length) - 1);
+        $maxRetry = (int) self::cfg('pay-relay.unique_code.max_retry', 10);
 
         // Fallback if config missing
         if ($min === 0 || $max === 0) {
@@ -65,5 +65,14 @@ final class UniqueCodeGenerator
         }
 
         return (int) $digits;
+    }
+
+    private static function cfg(string $key, mixed $default = null): mixed
+    {
+        try {
+            return config($key, $default);
+        } catch (\Throwable $e) {
+            return $default;
+        }
     }
 }
