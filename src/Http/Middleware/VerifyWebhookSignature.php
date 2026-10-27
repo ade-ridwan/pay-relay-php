@@ -22,8 +22,10 @@ class VerifyWebhookSignature
             return response()->json(['message' => 'Webhook secret not configured.'], 500);
         }
 
-        $signature = $request->header('X-Pay-Relay-Signature')
-            ?? $request->header('X-PAY-RELAY-SIGNATURE');
+        $headerName = config('pay-relay.webhook.signature_header', 'X-Pay-Relay-Signature');
+
+        $signature = $request->header($headerName)
+            ?? $request->header(strtoupper($headerName));
 
         if (empty($signature)) {
             return response()->json(['message' => 'Missing webhook signature.'], 401);

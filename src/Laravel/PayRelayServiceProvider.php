@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AdeRidwan\PayRelayPhp\Laravel;
 
 use AdeRidwan\PayRelayPhp\Console\ExpirePaymentsCommand;
+use AdeRidwan\PayRelayPhp\Console\GenerateSecretCommand;
 use AdeRidwan\PayRelayPhp\Http\Controllers\PaymentStatusController;
 use AdeRidwan\PayRelayPhp\Http\Controllers\WebhookController;
 use AdeRidwan\PayRelayPhp\Http\Middleware\VerifyWebhookSignature;
@@ -37,7 +38,7 @@ class PayRelayServiceProvider extends ServiceProvider
         ], 'pay-relay-payable');
 
         if ($this->app->runningInConsole()) {
-            $this->commands([ExpirePaymentsCommand::class]);
+            $this->commands([ExpirePaymentsCommand::class, GenerateSecretCommand::class]);
         }
 
         $this->registerRoutes();

@@ -1,11 +1,11 @@
 # pay-relay-php
 
-Relay **QRIS Statis** menjadi **QRIS Dinamis** dengan kode unik di nominal — tanpa payment gateway mahal. Verifikasi pembayaran via **webhook custom** dari aplikasi **Android Notification Listener** yang menangkap notifikasi mutasi masuk (BCA, BRI, Mandiri, DANA, dll).
+Relay **QRIS Statis** menjadi **QRIS Dinamis** dengan kode unik di nominal — tanpa payment gateway mahal. Verifikasi pembayaran via **webhook custom** dari aplikasi **Android Notification Listener** yang menangkap notifikasi mutasi masuk (BCA, BRI, Mandiri, DANA, GoPay Merchant, dll).
 
 > Cocok untuk UMKM / warung yang cuma punya 1 QRIS cetak tapi ingin checkout otomatis di web.
 
 [![PHP ^8.1](https://img.shields.io/badge/PHP-^8.1-blue)]()
-[![Laravel 10+](https://img.shields.io/badge/Laravel-10%2B-red)]()
+[![Laravel 10+](https://img.shields.io/badge/Laravel-10%7C11%7C12%7C13-red)]()
 [![License MIT](https://img.shields.io/badge/license-MIT-green)]()
 
 ---
@@ -14,10 +14,12 @@ Relay **QRIS Statis** menjadi **QRIS Dinamis** dengan kode unik di nominal — t
 
 - **QRIS Relay** — Parse TLV EMVCo, inject Tag `54` (amount) + ubah `01` jadi `12` (dinamis), hitung ulang CRC16-CCITT `6304`.
 - **Kode Unik Nominal** — `final = original + 100..999` (3 digit suffix). Contoh `100.000` → `100.123`. Anti-tabrakan untuk transaksi `pending`.
-- **Storage Database** — `pay_relay_payments` (`reference_id` ULID, `amount_final` indexed, `status: pending|paid|expired|cancelled`).
-- **Webhook Android** — `POST /api/pay-relay/webhook` dengan HMAC `X-Pay-Relay-Signature`, cocokkan `amount_final` → update `paid` (idempotent).
+- **Storage Database** — `pay_relay_payments` (`reference_id` ULID, `payable_type/id` morph, `amount_final` indexed, `status: pending|paid|expired|cancelled`). Model `PayRelayPayment` (alias `Payment` deprecated).
+- **Payable Morph** — Hubungkan ke `Donation` / `Transaction` via `HasPayRelayPayments` trait + `PayRelay::createFor($model, amount)`.
+- **Webhook Android** — `POST /api/pay-relay/webhook` HMAC header customizable, `verify_signature` bisa di-bypass untuk test, parser `WebhookParserInterface` + `AmountExtractor` field-agnostic (`title/text/ticker` apapun).
 - **Cek Status** — `GET /api/pay-relay/payments/{referenceId}/status` untuk polling FE.
 - **Expiry** — `php artisan pay-relay:expire` + events `PaymentCreated` / `PaymentPaid` / `PaymentExpired`.
+- **Secret Generator** — `php artisan pay-relay:secret`.
 
 ---
 
@@ -28,13 +30,20 @@ composer require ade-ridwan/pay-relay-php
 
 php artisan vendor:publish --tag=pay-relay-config
 php artisan vendor:publish --tag=pay-relay-migrations
+# untuk payable morph di DB lama:
+php artisan vendor:publish --tag=pay-relay-payable
 ```
 
 Isi `.env`:
 
-```env
-PAY_RELAY_QRIS_STATIC=000201010211...6304XXXX
-PAY_RELAY_WEBHOOK_SECRET=isi-minimal-32-karakter-random-di-sini
+```bash
+# generate otomatis
+php artisan pay-relay:secret
+# atau manual
+# PAY_RELAY_QRIS_STATIC=000201010211...6304XXXX
+# PAY_RELAY_WEBHOOK_SECRET=isi-minimal-32-karakter-random-di-sini
+# PAY_RELAY_VERIFY_SIGNATURE=true
+# PAY_RELAY_SIGNATURE_HEADER=X-Pay-Relay-Signature
 ```
 
 Lalu:
@@ -43,10 +52,10 @@ Lalu:
 php artisan migrate
 ```
 
-Tambahkan scheduler (opsional tapi disarankan):
+Scheduler (disarankan):
 
 ```php
-// app/Console/Kernel.php
+// app/Console/Kernel.php atau routes/console.php
 $schedule->command('pay-relay:expire')->everyMinute();
 ```
 
@@ -71,13 +80,15 @@ return [
     ],
     'webhook' => [
         'parser' => \AdeRidwan\PayRelayPhp\Support\DefaultWebhookParser::class,
+        'verify_signature' => env('PAY_RELAY_VERIFY_SIGNATURE', true),
+        'signature_header' => env('PAY_RELAY_SIGNATURE_HEADER', 'X-Pay-Relay-Signature'),
     ],
     'model' => \AdeRidwan\PayRelayPhp\Models\PayRelayPayment::class,
     'table' => 'pay_relay_payments',
 ];
 ```
 
-> Model `PayRelayPayment` sengaja tidak pakai nama `Payment` agar tidak bentrok dengan `App\Models\Payment` milikmu. Alias lama `Payment` masih ada (deprecated) untuk BC.
+> `PayRelayPayment` sengaja tidak pakai nama `Payment` agar tidak bentrok `App\Models\Payment`. `webhook.signature_header` bisa dikustom (mis. `X-Custom-Signature`).
 
 ---
 
@@ -86,7 +97,7 @@ return [
 ```php
 use AdeRidwan\PayRelayPhp\Laravel\Facades\PayRelay;
 
-// 1. Buat pembayaran
+// 1. Buat pembayaran (tanpa payable)
 $payment = PayRelay::create(amount: 100000);
 // $payment->reference_id  => "01H..." (ULID, untuk polling)
 // $payment->amount_original => 100000
@@ -94,6 +105,16 @@ $payment = PayRelay::create(amount: 100000);
 // $payment->amount_final  => 100123
 // $payment->qris_dynamic  => "000201010212..." (string QR siap render)
 // $payment->expires_at    => Carbon +15 menit
+
+// 1b. Dengan Donation/Transaction (payable morph)
+use App\Models\Donation;
+$donation = Donation::find(1);
+$payment = PayRelay::createFor($donation, 50000);
+// $payment->payable_type => "App\Models\Donation", payable_id => 1
+// $payment->payable => Donation model
+
+// Ambil qris untuk FE
+$qris = $payment->qris_dynamic;
 
 // 2. Tampilkan ke FE
 return response()->json([
@@ -104,10 +125,9 @@ return response()->json([
 
 // 3. Polling status
 $status = PayRelay::check($payment->reference_id); // PaymentStatus enum
-// atau via HTTP: GET /api/pay-relay/payments/{referenceId}/status
-// => {status:"pending", amount_final:100123, expires_at: "..."}
+// atau HTTP: GET /api/pay-relay/payments/{referenceId}/status
 
-// 4. Listen event untuk update order
+// 4. Listen event
 use AdeRidwan\PayRelayPhp\Events\PaymentPaid;
 Event::listen(PaymentPaid::class, fn(PaymentPaid $e) => logger("paid: ".$e->payment->reference_id));
 ```
@@ -122,24 +142,37 @@ $qrisDinamis = QrisRelay::toDynamic($staticQris, 100123);
 Crc16::verify($qrisDinamis); // true
 ```
 
----
-
-## Integrasi dengan `transactions` Milikmu (Opsi A)
-
-`reference_id` (`varchar 64 unique`) di `PayRelayPayment` memang disiapkan sebagai **correlation ID** ke tabelmu.
+### Ambil PayRelay dari Donation
 
 ```php
-// 1. Buat transaksi milikmu dulu
+use App\Models\Donation;
+
+$donation = Donation::find(1);
+$latest = $donation->latestPayRelayPayment(); // helper trait
+$qris = $latest?->qris_dynamic;
+
+$all = $donation->payRelayPayments; // Collection
+$pending = $donation->payRelayPayments()->where('status','pending')->first();
+```
+
+Pasang trait di model:
+
+```php
+use AdeRidwan\PayRelayPhp\Concerns\HasPayRelayPayments;
+
+class Donation extends Model { use HasPayRelayPayments; }
+```
+
+---
+
+## Integrasi `transactions` / `Donation`
+
+### Opsi A — Simple (`reference_id` sebagai FK)
+
+```php
 $tx = Transaction::create(['amount' => 100000, 'status' => 'pending']);
-
-// 2. Pakai PK transactions sebagai reference_id (cast string)
 $pay = PayRelay::create(amount: $tx->amount, referenceId: (string) $tx->id);
-
-// 3. FE polling pakai $tx->id
 // GET /api/pay-relay/payments/123/status
-
-// 4. Sinkron balik saat webhook paid
-use AdeRidwan\PayRelayPhp\Events\PaymentPaid;
 
 Event::listen(PaymentPaid::class, function (PaymentPaid $e) {
     Transaction::where('id', $e->payment->reference_id)->update([
@@ -149,66 +182,74 @@ Event::listen(PaymentPaid::class, function (PaymentPaid $e) {
 });
 ```
 
-**Rambu:**
-- `reference_id` harus unik — jangan `create()` 2x untuk `tx.id` yang sama sebelum expired. Untuk retry pakai `"$tx->id-retry-1"` atau batalkan dulu.
-- Jika PK sensitif, tetap pakai ULID internal (`PayRelay::create(100000)`) dan simpan mapping `transactions.pay_relay_ref = $pay->reference_id`.
+### Opsi B — Payable Morph (Recommended)
+
+```php
+$donation = Donation::create(['title'=>'Donasi Masjid','amount'=>50000]);
+$pay = PayRelay::createFor($donation, $donation->amount);
+
+// listener generik
+Event::listen(PaymentPaid::class, function (PaymentPaid $e) {
+    if ($e->payment->payable instanceof \App\Models\Donation) {
+        $e->payment->payable->update(['status'=>'paid','paid_at'=>$e->payment->paid_at]);
+    }
+});
+```
+
+**Rambu:** `reference_id` tetap unique — jangan `create()` 2x untuk id sama sebelum expired.
 
 ---
 
 ## Webhook Android
 
-Aplikasi Android kamu (Notification Listener) harus POST ke:
-
 ```
 POST /api/pay-relay/webhook
 Content-Type: application/json
 X-Pay-Relay-Signature: hmac_sha256(raw_body, PAY_RELAY_WEBHOOK_SECRET)
+# header name bisa dikustom via PAY_RELAY_SIGNATURE_HEADER
 ```
 
-**Test tanpa signature (bypass):** set di `.env` untuk local/testing:
+**Test tanpa signature (bypass):**
 ```env
 PAY_RELAY_VERIFY_SIGNATURE=false
 ```
-Lalu POST tanpa header signature akan lolos. Untuk production biarkan `true` (default).
 
-Payload:
+Payload fleksibel (field `title/text/ticker` apapun, di-scan rekursif):
 
 ```json
 {
-  "amount": 100123,
-  "amount_text": "Rp100.123",
-  "raw_message": "QRIS BCA: Terima Rp100.123 dari ...",
-  "package_name": "com.bca.mobile",
-  "posted_at": "2026-10-27T10:00:00+07:00"
+  "title": "Pembayaran QRIS statis diterima",
+  "text": "Rp 1.000 di ADE RIDWAN.",
+  "package": "com.gojek.gopaymerchant",
+  "timestamp": "2026-10-27T13:28:00.155+07:00"
 }
 ```
 
 **Aturan controller:**
-- `amount` dinormalisasi (`Rp100.123` → `100123`) via parser (`Contracts/WebhookParserInterface`).
+- `amount` diekstrak via `AmountExtractor` (`Rp` regex `Rp\.?[\s_]*([\d\._]+)`) — tahan `Rp 1.000`, `Rp_1_000`, `Rp1.000,00`, plus `getContent()` fallback jika `all()` kosong.
 - Cari `pay_relay_payments` dengan `amount_final = amount` + `status=pending` + `expires_at > now()` → update `paid`.
-- Jika sudah `paid` → response `200 {already_paid:true}` (idempotent).
+- Jika sudah `paid` → `200 {already_paid:true}` (idempotent).
 - Jika tidak ketemu → `404` (Android bisa retry).
+- Jika `amount` tidak ter-parse → `422`.
 
-**Custom parsing di project pengguna:**
+**Custom parsing di project:**
+
 ```php
 // app/Parsers/MyQrisParser.php
 use AdeRidwan\PayRelayPhp\Contracts\WebhookParserInterface;
-use AdeRidwan\PayRelayPhp\Support\UniqueCodeGenerator;
+use AdeRidwan\PayRelayPhp\Support\AmountExtractor;
 use Illuminate\Http\Request;
 
 class MyQrisParser implements WebhookParserInterface {
     public function parseAmount(Request $request): ?int {
-        // contoh field beda: data.nominal / sms.body
-        return UniqueCodeGenerator::normalizeAmount(
-            $request->input('data.nominal') ?? $request->input('sms.body') ?? $request->input('amount')
-        );
+        return AmountExtractor::fromAnyPayload($request->all());
+        // atau: AmountExtractor::fromText($request->input('custom.sms'))
     }
     public function parsePayload(Request $request): array {
-        return $request->all(); // simpan ke raw_notification
+        return $request->all();
     }
 }
-
-// config/pay-relay.php (publish dulu)
+// config/pay-relay.php
 'webhook' => ['parser' => \App\Parsers\MyQrisParser::class],
 ```
 
@@ -226,10 +267,12 @@ Response status:
 ```json
 {
   "reference_id": "01HXYZ",
+  "payable_type": "App\\Models\\Donation",
+  "payable_id": 1,
   "status": "pending",
-  "amount_original": 100000,
-  "amount_final": 100123,
-  "unique_code": "123",
+  "amount_original": 50000,
+  "amount_final": 50412,
+  "unique_code": "412",
   "qris_dynamic": "000201...",
   "expires_at": "2026-10-27T10:15:00+07:00",
   "paid_at": null
@@ -242,32 +285,36 @@ Response status:
 
 ```php
 use AdeRidwan\PayRelayPhp\Events\{PaymentCreated, PaymentPaid, PaymentExpired};
-
-// Kirim WA / Telegram saat paid
 Event::listen(PaymentPaid::class, fn($e) => SendWa::dispatch($e->payment));
 ```
 
 ```bash
-php artisan pay-relay:expire   # expire yang overdue
+php artisan pay-relay:expire                # expire overdue
+php artisan pay-relay:secret                # generate PAY_RELAY_WEBHOOK_SECRET
+php artisan pay-relay:secret --show         # tampilkan saja
+php artisan pay-relay:secret --length=32 --force
 ```
+
+Event `PaymentPaid` listener daftar di `AppServiceProvider::boot()` atau `bootstrap/app.php ->withEvents(discover: [...])` dengan `#[Listen]`.
 
 ---
 
 ## Alur Lengkap
 
 ```
-[Merchant QRIS Statis .env] -> PayRelay::create(100000) -> 100123 + QRIS Dinamis (Tag 54 & CRC)
--> Customer scan & bayar Rp100.123 -> HP merchant notif "Terima Rp100.123"
--> Android POST /webhook {amount:100123, signature} -> match pending -> paid -> event
--> FE polling /status -> "paid" -> Transaction update
+[Merchant QRIS Statis .env] -> PayRelay::createFor($donation, 50000) -> 50412 + QRIS Dinamis (Tag 54 & CRC)
+-> Customer scan & bayar Rp50.412 -> HP merchant notif "Rp 50.412"
+-> Android POST /webhook {text:"Rp 50.412", signature} -> AmountExtractor -> match pending -> paid -> PaymentPaid
+-> FE polling /status -> "paid" -> Donation update paid_at via listener
 ```
 
 ---
 
 ## Keamanan
 
-- `PAY_RELAY_WEBHOOK_SECRET` minimal 32 karakter, jangan commit.
-- Webhook wajib HMAC `hash_equals`, sudah ada `VerifyWebhookSignature` middleware.
+- `PAY_RELAY_WEBHOOK_SECRET` minimal 32 karakter (generate via `pay-relay:secret`), jangan commit.
+- Header signature customizable via `PAY_RELAY_SIGNATURE_HEADER`.
+- Webhook wajib HMAC `hash_equals`, middleware `VerifyWebhookSignature`.
 - Rate limit `throttle:60,1` default.
 - Jangan expose `qris_static` ke response publik.
 
@@ -275,14 +322,12 @@ php artisan pay-relay:expire   # expire yang overdue
 
 ## Roadmap
 
-- **V1.0** — MVP sekarang (relay, kode unik, DB, webhook, status, expire).
-- **V1.1** — `pay_relay_logs`, morph `payable_type/id` untuk multi-merchant.
-- **V1.2** — Dashboard Filament, notifikasi WA/Telegram.
+- **V1.0** — Relay QRIS, kode unik, DB payable morph, webhook parser + AmountExtractor, status, expire, secret command.
+- **V1.1** — `pay_relay_logs`, dashboard Filament.
+- **V1.2** — Multi-merchant, notifikasi WA/Telegram.
 
 ---
 
 ## Lisensi
 
 MIT — Ade Ridwan.
-
-Lihat `PRD.md` untuk spesifikasi lengkap dan `AGENTS.md` untuk panduan development.
