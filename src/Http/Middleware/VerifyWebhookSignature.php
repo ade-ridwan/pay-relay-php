@@ -6,6 +6,7 @@ namespace AdeRidwan\PayRelayPhp\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
 class VerifyWebhookSignature
@@ -32,7 +33,8 @@ class VerifyWebhookSignature
         }
 
         $payload = $request->getContent();
-        $expected = hash_hmac('sha256', $payload, $secret);
+        $expected = strpos($signature, 'sha256=') === 0 ? 'sha256=' . hash_hmac('sha256', $payload, $secret)
+            : hash_hmac('sha256', $payload, $secret);
 
         if (!hash_equals($expected, $signature)) {
             return response()->json(['message' => 'Invalid webhook signature.'], 401);
